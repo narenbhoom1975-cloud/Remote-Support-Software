@@ -1,9 +1,0 @@
-{
-  "name": "New Age Computers Remote",
-  "description": "Professional remote desktop support by New Age Computers. Connect, view screens, and get real-time troubleshooting advice.",
-  "requestFramePermissions": [
-    "microphone",
-    "camera",
-    "display-capture"
-  ]
-}
