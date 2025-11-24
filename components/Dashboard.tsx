@@ -26,14 +26,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onStartSession }) => {
 
   // Generate a random 9-digit ID on mount
   useEffect(() => {
-    const generateId = () => {
+    generateId();
+  }, []);
+
+  const generateId = () => {
       const p1 = Math.floor(Math.random() * 900) + 100;
       const p2 = Math.floor(Math.random() * 900) + 100;
       const p3 = Math.floor(Math.random() * 900) + 100;
-      return `${p1}-${p2}-${p3}`;
-    };
-    setMyId(generateId());
-  }, []);
+      setMyId(`${p1}-${p2}-${p3}`);
+  };
 
   const handleTabChange = (tab: 'technician' | 'client') => {
     if (tab === 'technician' && !isAuthenticated) {
@@ -336,6 +337,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ onStartSession }) => {
                                     <div className="p-2 rounded-lg bg-slate-900 border border-slate-800">
                                       {copied ? <Check className="w-5 h-5 text-green-500" /> : <Copy className="w-5 h-5 text-slate-400 group-hover:text-white" />}
                                     </div>
+                                </div>
+                                <div className="absolute right-4 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button 
+                                      onClick={(e) => { e.stopPropagation(); generateId(); }} 
+                                      className="p-2 text-slate-500 hover:text-white bg-slate-900 rounded-lg border border-slate-800"
+                                      title="Generate New ID"
+                                    >
+                                        <RefreshCw className="w-4 h-4" />
+                                    </button>
                                 </div>
                                 <div className={`text-xs mt-2 font-medium transition-opacity duration-300 ${copied ? 'opacity-100 text-green-500' : 'opacity-0 text-transparent'}`}>
                                     Copied to clipboard

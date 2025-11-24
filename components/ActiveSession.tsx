@@ -35,6 +35,7 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
   const peerInstance = useRef<Peer | null>(null);
   const connRef = useRef<DataConnection | null>(null);
   const callRef = useRef<MediaConnection | null>(null);
+  const ackIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Chat State
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
@@ -100,20 +101,27 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
             
             if (mode === 'client') {
                 setStatus(ConnectionStatus.CONNECTED);
-                setDetailedStatus("Technician connected. Sending acknowledgment...");
-                addMessage('Technician connected.', 'system');
-                showNotification("Technician Connected");
+                setDetailedStatus("Technician contacting. Handshaking...");
+                addMessage('Technician contacting...', 'system');
+                showNotification("Technician Contacting...");
                 
-                // CRITICAL: Send ACK immediately so Technician knows we are ready
-                setTimeout(() => {
+                // CRITICAL FIX: Robust ACK Loop
+                // Send ACK repeatedly until we get 'ack_received' from technician.
+                // This ensures the technician WAKES UP even if the first packet is dropped.
+                if (ackIntervalRef.current) clearInterval(ackIntervalRef.current);
+                
+                const sendAck = () => {
                     if (conn.open) {
+                        console.log("Sending ACK to technician...");
                         conn.send({ type: 'ack', from: myId });
-                    } else {
-                        conn.on('open', () => {
-                             conn.send({ type: 'ack', from: myId });
-                        });
                     }
-                }, 500);
+                };
+                
+                // Try immediately if open, otherwise wait for open
+                if (conn.open) sendAck();
+                else conn.on('open', sendAck);
+
+                ackIntervalRef.current = setInterval(sendAck, 1000);
             }
         });
 
@@ -168,6 +176,7 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
 
     return () => {
         mounted = false;
+        if (ackIntervalRef.current) clearInterval(ackIntervalRef.current);
         if (callRef.current) callRef.current.close();
         if (connRef.current) connRef.current.close();
         if (peerInstance.current) peerInstance.current.destroy();
@@ -212,6 +221,8 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
           const conn = peer.connect(targetId, { reliable: true });
           connRef.current = conn;
           
+          // Note: 'open' sometimes doesn't fire if connection is instantaneous or flaky
+          // We rely on the 'data' event in setupDataConnection as a fallback to confirm connection
           conn.on('open', () => {
               console.log("Connection OPENED on Technician side");
               setupDataConnection(conn);
@@ -227,8 +238,6 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
               setErrorMsg("Failed to connect to client.");
           });
 
-          // Fallback: If 'open' doesn't fire but we are stuck in Connecting, 
-          // allow manual retry or check logs.
       } catch (e: any) {
           setErrorMsg(e.message || "Failed to initiate connection");
           setStatus(ConnectionStatus.FAILED);
@@ -253,6 +262,8 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
 
   const handleManualRequest = () => {
       if (connRef.current) {
+          // If connection is not technically 'open' but we are trying to force it
+          // sometimes re-establishing helps, but usually just sending data works if P2P is alive.
           requestScreen(connRef.current);
       }
   };
@@ -261,18 +272,32 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
       conn.on('data', async (data: any) => {
           console.log("Received data:", data);
 
-          // If we receive ANY data, we are definitely connected.
-          // This fixes the bug where Technician stays in "Connecting" state if 'open' event was missed.
+          // Force status to CONNECTED if we receive ANY data.
+          // This fixes the 'Split Brain' bug where Technician stays on 'Connecting...'
           if (status !== ConnectionStatus.CONNECTED) {
+              console.log("Force-switching status to CONNECTED due to incoming data");
               setStatus(ConnectionStatus.CONNECTED);
+              setDetailedStatus("Connected.");
           }
 
           if (data.type === 'ack') {
               console.log("ACK received from client");
-              // Client is ready, let's request screen again to be sure
+              // 1. Tell client to stop sending ACKs
+              conn.send({ type: 'ack_received' });
+              
+              // 2. Client is ready, let's request screen again to be sure
               if (mode === 'technician') {
                   requestScreen(conn);
               }
+          }
+
+          if (data.type === 'ack_received') {
+              console.log("Technician confirmed connection. Stopping ACK loop.");
+              if (ackIntervalRef.current) {
+                  clearInterval(ackIntervalRef.current);
+                  ackIntervalRef.current = null;
+              }
+              setDetailedStatus("Connected. Waiting for screen request...");
           }
 
           if (data.type === 'chat') {
@@ -296,6 +321,7 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
       
       conn.on('close', () => {
           addMessage('Peer disconnected.', 'system');
+          if (ackIntervalRef.current) clearInterval(ackIntervalRef.current);
           setStatus(ConnectionStatus.DISCONNECTED);
           setDetailedStatus("Peer disconnected");
           setRemoteStream(null);
