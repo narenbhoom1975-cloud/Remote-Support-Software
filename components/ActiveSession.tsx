@@ -1,6 +1,6 @@
 
 import React, { useEffect, useRef, useState } from 'react';
-import { X, MessageSquare, BrainCircuit, Wifi, AlertTriangle, ChevronDown, Monitor, Command, Lock, Power, RefreshCw, FileText, CheckCircle2, User, Share, ArrowLeft, RefreshCcw, Info, Play, ShieldCheck, Signal, Radio } from 'lucide-react';
+import { X, MessageSquare, BrainCircuit, Wifi, AlertTriangle, ChevronDown, Monitor, Command, Lock, Power, RefreshCw, FileText, CheckCircle2, User, Share, ArrowLeft, RefreshCcw, Info, Play, ShieldCheck, Signal, Radio, MousePointer2, Maximize, MinusSquare, Scaling } from 'lucide-react';
 import { ChatPanel } from './ChatPanel';
 import { ConnectionStatus, ChatMessage } from '../types';
 import { analyzeScreenSnapshot } from '../services/geminiService';
@@ -30,6 +30,10 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const [showConsentModal, setShowConsentModal] = useState(false);
   const [technicianIdForCall, setTechnicianIdForCall] = useState<string>('');
+  
+  // View Control
+  const [viewMode, setViewMode] = useState<'contain' | 'cover' | 'fill'>('contain');
+  const [pointerPos, setPointerPos] = useState<{x: number, y: number} | null>(null);
   
   // PeerJS Refs
   const peerInstance = useRef<Peer | null>(null);
@@ -262,8 +266,6 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
 
   const handleManualRequest = () => {
       if (connRef.current) {
-          // If connection is not technically 'open' but we are trying to force it
-          // sometimes re-establishing helps, but usually just sending data works if P2P is alive.
           requestScreen(connRef.current);
       }
   };
@@ -273,15 +275,12 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
           console.log("Received data:", data);
 
           // Force status to CONNECTED if we receive ANY data.
-          // This fixes the 'Split Brain' bug where Technician stays on 'Connecting...'
           if (status !== ConnectionStatus.CONNECTED) {
-              console.log("Force-switching status to CONNECTED due to incoming data");
               setStatus(ConnectionStatus.CONNECTED);
               setDetailedStatus("Connected.");
           }
 
           if (data.type === 'ack') {
-              console.log("ACK received from client");
               // 1. Tell client to stop sending ACKs
               conn.send({ type: 'ack_received' });
               
@@ -292,7 +291,6 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
           }
 
           if (data.type === 'ack_received') {
-              console.log("Technician confirmed connection. Stopping ACK loop.");
               if (ackIntervalRef.current) {
                   clearInterval(ackIntervalRef.current);
                   ackIntervalRef.current = null;
@@ -308,6 +306,13 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
           
           if (data.type === 'command') {
               showNotification(`Remote Command: ${data.action}`);
+          }
+
+          // Handle Laser Pointer (Client Side)
+          if (data.type === 'cursor_click' && mode === 'client') {
+              setPointerPos({ x: data.x, y: data.y });
+              // Clear pointer after animation
+              setTimeout(() => setPointerPos(null), 2500);
           }
 
           if (data.type === 'request_stream' && mode === 'client') {
@@ -332,7 +337,6 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
   const handleConsentToShare = async () => {
       setShowConsentModal(false);
       try {
-          // IMPORTANT: Capture cursor and audio for best compatibility
           const stream = await navigator.mediaDevices.getDisplayMedia({
               video: { 
                 cursor: "always",
@@ -341,7 +345,6 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
               audio: false 
           });
 
-          // Determine target ID: use the one sent in payload, or fallback to connection peer
           const targetPeerId = technicianIdForCall || connRef.current?.peer;
 
           if (peerInstance.current && targetPeerId) {
@@ -375,9 +378,23 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
       }
   };
 
+  // --- LASER POINTER LOGIC ---
+  const handleVideoClick = (e: React.MouseEvent<HTMLDivElement>) => {
+      if (mode !== 'technician' || !remoteStream) return;
+
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = ((e.clientX - rect.left) / rect.width) * 100;
+      const y = ((e.clientY - rect.top) / rect.height) * 100;
+
+      if (connRef.current && connRef.current.open) {
+          connRef.current.send({ type: 'cursor_click', x, y });
+          showNotification("Laser pointer sent (Browser restricts direct control)");
+      }
+  };
+
   const forcePlayVideo = () => {
       if (videoRef.current && remoteStream) {
-          videoRef.current.muted = true; // Ensure muted to allow play
+          videoRef.current.muted = true;
           videoRef.current.play().then(() => setIsVideoPlaying(true)).catch(console.error);
       }
   };
@@ -433,10 +450,25 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
                 </div>
             </div>
 
-            <button onClick={() => sendCommand("Open File Transfer")} className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg transition-all border border-transparent hover:border-slate-700">
-                <FileText className="w-4 h-4" />
-                <span>Files</span>
-            </button>
+            {/* View Menu for Scaling */}
+            <div className="relative group h-10 flex items-center">
+                <button className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg transition-all border border-transparent hover:border-slate-700">
+                    <Scaling className="w-4 h-4" />
+                    <span>View</span>
+                    <ChevronDown className="w-3 h-3 opacity-50" />
+                </button>
+                <div className="absolute top-full left-0 mt-1 w-48 bg-slate-900 border border-slate-700 shadow-xl rounded-lg hidden group-hover:block overflow-hidden z-[70]">
+                    <button onClick={() => setViewMode('contain')} className={`w-full px-4 py-3 hover:bg-slate-800 flex items-center gap-3 text-sm text-left ${viewMode === 'contain' ? 'text-green-400 bg-slate-800/50' : 'text-slate-200'}`}>
+                        <MinusSquare className="w-4 h-4" /> Fit to Screen
+                    </button>
+                    <button onClick={() => setViewMode('fill')} className={`w-full px-4 py-3 hover:bg-slate-800 flex items-center gap-3 text-sm text-left ${viewMode === 'fill' ? 'text-green-400 bg-slate-800/50' : 'text-slate-200'}`}>
+                        <Maximize className="w-4 h-4" /> Stretch to Fill
+                    </button>
+                    <button onClick={() => setViewMode('cover')} className={`w-full px-4 py-3 hover:bg-slate-800 flex items-center gap-3 text-sm text-left ${viewMode === 'cover' ? 'text-green-400 bg-slate-800/50' : 'text-slate-200'}`}>
+                        <Scaling className="w-4 h-4" /> Zoom/Original
+                    </button>
+                </div>
+            </div>
 
              <div className="w-px h-6 bg-slate-700 mx-2"></div>
 
@@ -532,6 +564,24 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
           </div>
       )}
 
+      {/* --- POINTER OVERLAY (Client Only) --- */}
+      {mode === 'client' && pointerPos && (
+          <div 
+            className="absolute z-[100] pointer-events-none transition-all duration-200"
+            style={{ 
+                left: `${pointerPos.x}%`, 
+                top: `${pointerPos.y}%`,
+                transform: 'translate(-50%, -50%)' 
+            }}
+          >
+              <div className="w-8 h-8 rounded-full border-2 border-red-500 bg-red-500/30 animate-ping absolute"></div>
+              <div className="w-3 h-3 rounded-full bg-red-600 shadow-lg shadow-red-500/50 relative"></div>
+              <div className="absolute top-4 left-4 bg-red-600 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow whitespace-nowrap">
+                  Technician Pointing
+              </div>
+          </div>
+      )}
+
       <div className="flex-1 flex w-full relative overflow-hidden">
         {/* Main Area */}
         <div className="flex-1 flex flex-col h-full relative bg-zinc-950">
@@ -558,7 +608,10 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
                 </div>
             )}
 
-            <div className="flex-1 flex items-center justify-center overflow-hidden relative bg-zinc-950">
+            <div 
+                className={`flex-1 flex items-center justify-center overflow-hidden relative bg-zinc-950 ${mode === 'technician' ? 'cursor-crosshair' : ''}`}
+                onClick={handleVideoClick}
+            >
                 {status === ConnectionStatus.FAILED && (
                     <div className="text-center p-8 max-w-md bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl z-50">
                         <AlertTriangle className="w-16 h-16 text-red-500 mx-auto mb-4" />
@@ -632,8 +685,8 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
                     autoPlay 
                     playsInline 
                     muted 
-                    className={`max-w-full max-h-full shadow-2xl object-contain transition-opacity duration-500 ${status === ConnectionStatus.CONNECTED && isVideoPlaying ? 'opacity-100' : 'opacity-0'}`}
-                    style={{ width: '100%', height: '100%' }}
+                    className={`max-w-full max-h-full shadow-2xl transition-opacity duration-500 ${status === ConnectionStatus.CONNECTED && isVideoPlaying ? 'opacity-100' : 'opacity-0'}`}
+                    style={{ width: '100%', height: '100%', objectFit: viewMode }}
                 />
                 
                 {/* Client Status Overlay */}
