@@ -288,7 +288,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onStartSession }) => {
                         <div>
                             <h4 className="text-base font-medium text-slate-200">Pro Tip</h4>
                             <p className="text-sm text-slate-400 mt-1 leading-relaxed">
-                                Once connected, use the <strong>AI Assist</strong> button in the toolbar to automatically diagnose issues on the user's screen.
+                                Ask the client to <strong>stay on the "User" tab</strong> and click "Go Online" before you attempt to connect.
                             </p>
                         </div>
                     </div>

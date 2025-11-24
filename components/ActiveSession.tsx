@@ -1,6 +1,6 @@
 
 import React, { useEffect, useRef, useState } from 'react';
-import { X, MessageSquare, BrainCircuit, Wifi, AlertTriangle, ChevronDown, Monitor, Command, Lock, Power, RefreshCw, FileText, CheckCircle2, User, Share, ArrowLeft, RefreshCcw } from 'lucide-react';
+import { X, MessageSquare, BrainCircuit, Wifi, AlertTriangle, ChevronDown, Monitor, Command, Lock, Power, RefreshCw, FileText, CheckCircle2, User, Share, ArrowLeft, RefreshCcw, Info, Play, ShieldCheck } from 'lucide-react';
 import { ChatPanel } from './ChatPanel';
 import { ConnectionStatus, ChatMessage } from '../types';
 import { analyzeScreenSnapshot } from '../services/geminiService';
@@ -16,6 +16,7 @@ interface ActiveSessionProps {
 
 export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, targetId, onEndSession }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [status, setStatus] = useState<ConnectionStatus>(ConnectionStatus.CONNECTING);
   
   // UI States
@@ -25,14 +26,15 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [notification, setNotification] = useState<string | null>(null);
-  const [incomingCall, setIncomingCall] = useState<boolean>(false);
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+  const [showConsentModal, setShowConsentModal] = useState(false);
   
   // PeerJS Refs
   const peerInstance = useRef<Peer | null>(null);
   const connRef = useRef<DataConnection | null>(null);
   const callRef = useRef<MediaConnection | null>(null);
 
-  // Chat State lifted up to handle incoming messages
+  // Chat State
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     { id: '0', sender: 'system', text: 'Initializing secure connection...', timestamp: new Date() }
   ]);
@@ -52,11 +54,18 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
   };
 
   const handleSendMessage = (text: string) => {
-      // Add locally
-      addMessage(text, 'technician');
-      // Send over P2P
+      // 1. Determine who I am for the local display
+      // If I am technician, I am the 'technician'. If I am client, I am the 'user'.
+      const mySenderRole = mode === 'technician' ? 'technician' : 'user';
+
+      // 2. Add locally so I can see my own message
+      addMessage(text, mySenderRole);
+
+      // 3. Send over P2P
       if (connRef.current && connRef.current.open) {
           connRef.current.send({ type: 'chat', text });
+      } else {
+          showNotification("Not connected. Message not sent.");
       }
   };
 
@@ -67,7 +76,6 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
     const initPeer = async () => {
       try {
         console.log(`Initializing PeerJS with ID: ${myId}`);
-        // Create Peer instance. Using default public PeerJS server (Backend).
         const peer = new Peer(myId, {
            debug: 1,
         });
@@ -85,11 +93,12 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
           }
         });
 
-        // Handle Incoming Data Connection (Chat/Commands)
+        // 1. Handle Incoming Data Connection (Chat/Signaling)
         peer.on('connection', (conn) => {
             console.log("Incoming data connection from", conn.peer);
             connRef.current = conn;
             setupDataConnection(conn);
+            
             if (mode === 'client') {
                 setStatus(ConnectionStatus.CONNECTED);
                 addMessage('New Age Computers Technician connected.', 'system');
@@ -97,51 +106,29 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
             }
         });
 
-        // Handle Incoming Video Call
-        peer.on('call', async (call) => {
+        // 2. Handle Incoming Media Call (Technician receives screen, Client usually initiates)
+        peer.on('call', (call) => {
             console.log("Incoming call from", call.peer);
             
-            if (mode === 'client') {
-                // Client receives call -> Needs to answer with screen stream
-                setIncomingCall(true); // Can trigger a UI prompt if desired
+            // Technician Logic: Answer the call to view screen
+            if (mode === 'technician') {
+                call.answer(); // Answer without sending a stream back (Receive only)
+                callRef.current = call;
                 
-                try {
-                    // Ask user for screen
-                    const stream = await navigator.mediaDevices.getDisplayMedia({
-                         video: { cursor: "always" } as any,
-                         audio: false
-                    });
-                    
-                    // Answer the call with the stream
-                    call.answer(stream);
-                    callRef.current = call;
-                    
+                call.on('stream', (stream) => {
+                    console.log("Received remote stream", stream);
+                    // CRITICAL: Save stream to state to ensure it persists through re-renders
+                    setRemoteStream(stream);
                     setStatus(ConnectionStatus.CONNECTED);
-                    addMessage('Sharing screen with New Age Computers.', 'system');
+                    addMessage("Receiving remote screen.", 'system');
+                });
 
-                    // End session if user stops sharing via browser UI
-                    stream.getVideoTracks()[0].onended = () => {
-                        onEndSession();
-                    };
-
-                } catch (err: any) {
-                    console.error("Failed to get local stream", err);
-                    setErrorMsg("Screen sharing denied. " + err.message);
-                    // Reject call if no stream
-                    call.close();
-                }
-            } else {
-                // Technician shouldn't really receive calls in this flow, but just in case
-                call.answer(); 
+                call.on('error', (err) => console.error("Call error", err));
+            } 
+            // Client Logic: Should not receive calls in this new flow, but safe to answer
+            else {
+                 call.answer(); 
             }
-
-            // If we receive a stream (Technician view)
-            call.on('stream', (remoteStream) => {
-                if (videoRef.current) {
-                    videoRef.current.srcObject = remoteStream;
-                    setStatus(ConnectionStatus.CONNECTED);
-                }
-            });
         });
 
         peer.on('error', (err: any) => {
@@ -175,8 +162,28 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, myId]);
 
+  // --- Attach Stream to Video ---
+  useEffect(() => {
+    if (videoRef.current && remoteStream) {
+        console.log("Attaching stream to video element", remoteStream.id);
+        videoRef.current.srcObject = remoteStream;
+        
+        const playPromise = videoRef.current.play();
+        
+        if (playPromise !== undefined) {
+            playPromise.then(() => {
+                console.log("Video playing successfully");
+                setIsVideoPlaying(true);
+            }).catch(error => {
+                console.error("Auto-play prevented:", error);
+                setIsVideoPlaying(false); // Show manual play button
+            });
+        }
+    }
+  }, [remoteStream]);
 
-  // --- Technician Logic: Connect to Client ---
+
+  // --- Technician Logic: Connect & Request Screen ---
   const connectToClient = (peer: Peer) => {
       if (!targetId) return;
       
@@ -185,27 +192,27 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
       addMessage(`Connecting to ${targetId}...`, 'system');
       
       try {
-          // 1. Open Data Connection
-          const conn = peer.connect(targetId);
+          // Open Data Connection
+          const conn = peer.connect(targetId, { reliable: true });
           connRef.current = conn;
-          setupDataConnection(conn);
-
-          // 2. Call the client (Video Request)
-          // Let's create a dummy stream for the Technician to "call" with.
-          const canvas = document.createElement('canvas');
-          const stream = canvas.captureStream(1);
-          const call = peer.call(targetId, stream);
           
-          call.on('stream', (remoteStream) => {
-              // This is the Client's screen!
-              if (videoRef.current) {
-                  videoRef.current.srcObject = remoteStream;
-                  setStatus(ConnectionStatus.CONNECTED);
-                  addMessage("Receiving remote screen.", 'system');
-              }
+          conn.on('open', () => {
+              setupDataConnection(conn);
+              setStatus(ConnectionStatus.CONNECTED);
+              addMessage("Connected. Requesting screen...", 'system');
+              
+              // Signal client to start sharing
+              setTimeout(() => {
+                  conn.send({ type: 'request_stream' });
+              }, 1000);
           });
-          
-          callRef.current = call;
+
+          conn.on('error', (err) => {
+              console.error("Data connection error", err);
+              setStatus(ConnectionStatus.FAILED);
+              setErrorMsg("Failed to connect to client data channel.");
+          });
+
       } catch (e: any) {
           setErrorMsg(e.message || "Failed to initiate connection");
           setStatus(ConnectionStatus.FAILED);
@@ -219,19 +226,28 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
   };
 
   const setupDataConnection = (conn: DataConnection) => {
-      conn.on('open', () => {
-          setStatus(ConnectionStatus.CONNECTED);
-          addMessage('Data channel established.', 'system');
-      });
+      conn.on('data', async (data: any) => {
+          console.log("Received data:", data);
 
-      conn.on('data', (data: any) => {
+          // Chat
           if (data.type === 'chat') {
-              addMessage(data.text, 'user'); // Remote user is 'user' from our perspective
+              const senderRole = mode === 'technician' ? 'user' : 'technician';
+              addMessage(data.text, senderRole); 
               if (!showChat) showNotification("New chat message");
           }
+          
+          // Commands
           if (data.type === 'command') {
               showNotification(`Remote Command: ${data.action}`);
-              // In a real app, we would execute logic here (if native agent)
+          }
+
+          // Screen Request (Client Side)
+          if (data.type === 'request_stream' && mode === 'client') {
+              console.log("Technician requested screen sharing.");
+              // IMPORTANT: We cannot call getDisplayMedia directly here because this is an async callback.
+              // Browsers require a user gesture (click) to start screen sharing.
+              // We must show a modal to the user.
+              setShowConsentModal(true);
           }
       });
       
@@ -241,12 +257,49 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
       });
   };
 
+  const handleConsentToShare = async () => {
+      setShowConsentModal(false);
+      try {
+          const stream = await navigator.mediaDevices.getDisplayMedia({
+              video: { 
+                cursor: "always",
+                frameRate: 30
+              } as any,
+              audio: false
+          });
+
+          // Client Calls Technician with the Stream
+          if (peerInstance.current && connRef.current) {
+              const call = peerInstance.current.call(connRef.current.peer, stream);
+              callRef.current = call;
+              addMessage("Sharing screen with New Age Computers.", 'system');
+              
+              stream.getVideoTracks()[0].onended = () => {
+                  onEndSession();
+              };
+          }
+
+      } catch (err: any) {
+          console.error("Screen share error", err);
+          if (connRef.current) {
+             connRef.current.send({ type: 'chat', text: "System: User denied screen sharing request." });
+          }
+          setErrorMsg("Screen sharing denied. Please reload to try again.");
+      }
+  };
+
   const sendCommand = (action: string) => {
       if (connRef.current && connRef.current.open) {
           connRef.current.send({ type: 'command', action });
           showNotification(`Sent ${action}`);
       } else {
           showNotification("Not connected");
+      }
+  };
+
+  const forcePlayVideo = () => {
+      if (videoRef.current && remoteStream) {
+          videoRef.current.play().then(() => setIsVideoPlaying(true)).catch(console.error);
       }
   };
 
@@ -370,9 +423,41 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
   return (
     <div className="flex flex-col h-full w-full bg-black overflow-hidden relative">
       
+      {/* --- SCREEN SHARE CONSENT MODAL --- */}
+      {showConsentModal && (
+        <div className="absolute inset-0 z-[100] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-300">
+            <div className="bg-slate-900 border border-slate-600 rounded-2xl shadow-2xl max-w-md w-full p-8 text-center">
+                <div className="w-20 h-20 bg-blue-900/30 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <Monitor className="w-10 h-10 text-blue-400 animate-pulse" />
+                </div>
+                <h2 className="text-2xl font-bold text-white mb-2">Technician Requesting View</h2>
+                <p className="text-slate-300 mb-8">
+                    The support technician wants to view your screen to diagnose the issue. Do you want to allow this?
+                </p>
+                <div className="flex flex-col gap-3">
+                    <button 
+                        onClick={handleConsentToShare}
+                        className="w-full py-4 bg-green-600 hover:bg-green-500 text-white rounded-xl font-bold text-lg transition-all shadow-lg shadow-green-600/20 flex items-center justify-center gap-2"
+                    >
+                        <CheckCircle2 className="w-5 h-5" /> Approve & Share Screen
+                    </button>
+                    <button 
+                        onClick={() => {
+                            setShowConsentModal(false);
+                            if(connRef.current) connRef.current.send({type: 'chat', text: 'System: User declined screen sharing.'});
+                        }}
+                        className="w-full py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-medium transition-all"
+                    >
+                        Decline
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
       {mode === 'technician' && <TopToolbar />}
       {mode === 'client' && (
-          <div className="absolute top-6 right-6 z-[100] flex gap-3 pointer-events-auto">
+          <div className="absolute top-6 right-6 z-[90] flex gap-3 pointer-events-auto">
               <button 
                 onClick={() => setShowChat(!showChat)} 
                 className="bg-slate-900/90 backdrop-blur-md p-4 rounded-full text-white shadow-2xl border-2 border-slate-700 hover:border-blue-500 hover:bg-slate-800 transition-all group"
@@ -404,7 +489,7 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
                     <span className="text-slate-500">|</span>
                     <span>Session ID: <span className="text-white">{myId}</span></span>
                     <span className="text-slate-500">|</span>
-                    <span className="flex items-center gap-1 text-green-500/70"><Lock className="w-3 h-3" /> New Age Computers Secured</span>
+                    <span className="flex items-center gap-1 text-green-500/70"><ShieldCheck className="w-3 h-3" /> New Age Computers Secured</span>
                  </div>
                  {mode === 'technician' && <div className="text-blue-400">Remote: {targetId}</div>}
             </div>
@@ -416,9 +501,9 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
                 </div>
             )}
 
-            <div className="flex-1 flex items-center justify-center overflow-auto relative">
+            <div className="flex-1 flex items-center justify-center overflow-hidden relative bg-zinc-950">
                 {status === ConnectionStatus.FAILED && (
-                    <div className="text-center p-8 max-w-md bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl">
+                    <div className="text-center p-8 max-w-md bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl z-50">
                         <AlertTriangle className="w-16 h-16 text-red-500 mx-auto mb-4" />
                         <h3 className="text-xl text-white font-bold mb-2">Connection Failed</h3>
                         <p className="text-zinc-400 mb-6">{errorMsg || "Could not establish P2P connection."}</p>
@@ -437,11 +522,34 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
                 )}
                 
                 {status === ConnectionStatus.CONNECTING && (
-                    <div className="text-center p-8 bg-slate-900/50 rounded-2xl backdrop-blur-sm border border-slate-800">
+                    <div className="text-center p-8 bg-slate-900/50 rounded-2xl backdrop-blur-sm border border-slate-800 z-50">
                          <div className="animate-spin w-12 h-12 border-4 border-green-500 border-t-transparent rounded-full mx-auto mb-6"></div>
                          <h3 className="text-xl text-white font-bold tracking-tight">Connecting to New Age Computers...</h3>
-                         <p className="text-slate-400 text-sm mt-2 font-mono">{mode === 'technician' ? `Calling ${targetId}...` : `Waiting for technician at ${myId}...`}</p>
+                         <p className="text-slate-400 text-sm mt-2 font-mono">{mode === 'technician' ? `Connecting to ${targetId}...` : `Waiting for technician at ${myId}...`}</p>
                     </div>
+                )}
+                
+                {/* Connected but waiting for video or black screen detected (Technician View) */}
+                {mode === 'technician' && status === ConnectionStatus.CONNECTED && !isVideoPlaying && (
+                     <div className="absolute inset-0 flex items-center justify-center z-40 bg-slate-950/50 backdrop-blur-sm">
+                         <div className="bg-slate-900 p-8 rounded-2xl border border-slate-700 shadow-2xl text-center max-w-sm">
+                            <div className="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
+                                <Monitor className="w-8 h-8 text-blue-400" />
+                            </div>
+                            <h3 className="text-lg font-bold text-white mb-2">Waiting for Video Stream</h3>
+                            <p className="text-slate-400 text-sm mb-6">Request sent to client. Waiting for them to approve screen sharing...</p>
+                            
+                            {/* Manual Play Button if browser blocked autoplay */}
+                            {remoteStream && (
+                                <button 
+                                    onClick={forcePlayVideo}
+                                    className="w-full py-3 bg-green-600 hover:bg-green-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors"
+                                >
+                                    <Play className="w-5 h-5 fill-current" /> Start Video
+                                </button>
+                            )}
+                         </div>
+                     </div>
                 )}
 
                 {/* Video Element */}
@@ -450,17 +558,22 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
                     autoPlay 
                     playsInline 
                     muted 
-                    className={`max-w-full max-h-full shadow-2xl ${status === ConnectionStatus.CONNECTED ? 'block' : 'hidden'}`}
+                    className={`max-w-full max-h-full shadow-2xl object-contain transition-opacity duration-500 ${status === ConnectionStatus.CONNECTED ? 'opacity-100' : 'opacity-0'}`}
+                    style={{ width: '100%', height: '100%' }}
                 />
                 
-                {/* Client Mode Placeholder if not sharing yet but connected via Data */}
-                {mode === 'client' && status === ConnectionStatus.CONNECTED && !videoRef.current?.srcObject && (
-                    <div className="text-center text-slate-400 p-8 bg-slate-900/80 rounded-2xl border border-slate-700 backdrop-blur shadow-[0_0_30px_rgba(74,222,128,0.1)]">
-                        <div className="w-20 h-20 bg-green-900/20 rounded-full flex items-center justify-center mx-auto mb-6">
-                           <Share className="w-10 h-10 text-green-500 animate-pulse" />
+                {/* Client Mode Placeholder - Active */}
+                {mode === 'client' && status === ConnectionStatus.CONNECTED && !showConsentModal && (
+                    <div className="text-center text-slate-400 p-8 bg-slate-900/80 rounded-2xl border border-slate-700 backdrop-blur shadow-[0_0_30px_rgba(74,222,128,0.1)] z-30 absolute">
+                        <div className="w-20 h-20 bg-green-900/20 rounded-full flex items-center justify-center mx-auto mb-6 relative">
+                           <div className="absolute inset-0 bg-green-500/20 rounded-full animate-ping"></div>
+                           <Share className="w-10 h-10 text-green-500 relative z-10" />
                         </div>
                         <h3 className="text-white font-bold text-lg mb-2">Session Active</h3>
                         <p className="mb-4">Technician is viewing your screen.</p>
+                        <div className="flex items-center justify-center gap-2 text-yellow-500 bg-yellow-900/20 p-2 rounded text-xs mb-4">
+                             <Info className="w-4 h-4" /> Tip: Don't minimize the shared window.
+                        </div>
                         <div className="text-green-500/50 text-xs font-mono border-t border-slate-800 pt-4 mt-4 uppercase tracking-wider">
                             Powered by New Age Computers
                         </div>
