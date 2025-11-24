@@ -1,6 +1,6 @@
 
 import React, { useEffect, useRef, useState } from 'react';
-import { X, MessageSquare, BrainCircuit, Wifi, AlertTriangle, ChevronDown, Monitor, Command, Lock, Power, RefreshCw, FileText, CheckCircle2, User, Share, ArrowLeft, RefreshCcw, Info, Play, ShieldCheck, Signal } from 'lucide-react';
+import { X, MessageSquare, BrainCircuit, Wifi, AlertTriangle, ChevronDown, Monitor, Command, Lock, Power, RefreshCw, FileText, CheckCircle2, User, Share, ArrowLeft, RefreshCcw, Info, Play, ShieldCheck, Signal, Radio } from 'lucide-react';
 import { ChatPanel } from './ChatPanel';
 import { ConnectionStatus, ChatMessage } from '../types';
 import { analyzeScreenSnapshot } from '../services/geminiService';
@@ -18,7 +18,7 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
   const videoRef = useRef<HTMLVideoElement>(null);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [status, setStatus] = useState<ConnectionStatus>(ConnectionStatus.CONNECTING);
-  const [detailedStatus, setDetailedStatus] = useState<string>("Initializing P2P Network...");
+  const [detailedStatus, setDetailedStatus] = useState<string>("Initializing Network...");
   
   // UI States
   const [showChat, setShowChat] = useState(false);
@@ -83,7 +83,8 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
           console.log('My peer ID is: ' + id);
           if (mounted) {
               if (mode === 'technician') {
-                  connectToClient(peer);
+                  // Wait a moment for network propagation then connect
+                  setTimeout(() => connectToClient(peer), 500);
               } else {
                   setDetailedStatus("Waiting for technician connection...");
                   addMessage(`Waiting for technician (ID: ${myId})...`, 'system');
@@ -99,9 +100,20 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
             
             if (mode === 'client') {
                 setStatus(ConnectionStatus.CONNECTED);
-                setDetailedStatus("Technician connected. Waiting for commands.");
-                addMessage('New Age Computers Technician connected.', 'system');
+                setDetailedStatus("Technician connected. Sending acknowledgment...");
+                addMessage('Technician connected.', 'system');
                 showNotification("Technician Connected");
+                
+                // CRITICAL: Send ACK immediately so Technician knows we are ready
+                setTimeout(() => {
+                    if (conn.open) {
+                        conn.send({ type: 'ack', from: myId });
+                    } else {
+                        conn.on('open', () => {
+                             conn.send({ type: 'ack', from: myId });
+                        });
+                    }
+                }, 500);
             }
         });
 
@@ -117,7 +129,7 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
                 call.on('stream', (stream) => {
                     console.log("Received remote stream", stream);
                     setRemoteStream(stream);
-                    setStatus(ConnectionStatus.CONNECTED);
+                    setStatus(ConnectionStatus.CONNECTED); // Force connected
                     setDetailedStatus("Video stream active");
                     addMessage("Receiving remote screen.", 'system');
                 });
@@ -127,7 +139,6 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
                     setErrorMsg("Video stream error: " + err.message);
                 });
             } else {
-                // Client usually answers if called, but in this flow client calls technician
                 call.answer(); 
             }
         });
@@ -143,7 +154,9 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
             }
 
             setErrorMsg(userFriendlyError);
-            setStatus(ConnectionStatus.FAILED);
+            if (status !== ConnectionStatus.CONNECTED) {
+               setStatus(ConnectionStatus.FAILED);
+            }
         });
 
       } catch (err: any) {
@@ -195,19 +208,17 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
       addMessage(`Connecting to ${targetId}...`, 'system');
       
       try {
+          // Use reliable: true for better signaling
           const conn = peer.connect(targetId, { reliable: true });
           connRef.current = conn;
           
           conn.on('open', () => {
+              console.log("Connection OPENED on Technician side");
               setupDataConnection(conn);
               setStatus(ConnectionStatus.CONNECTED);
-              setDetailedStatus("Signaling connected. Requesting screen...");
+              setDetailedStatus("Signaling established. Requesting screen...");
               addMessage("Connected. Requesting screen...", 'system');
-              
-              // Pass MY ID so client knows exactly who to call back
-              setTimeout(() => {
-                  conn.send({ type: 'request_stream', technicianId: myId });
-              }, 1000);
+              requestScreen(conn);
           });
 
           conn.on('error', (err) => {
@@ -216,9 +227,21 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
               setErrorMsg("Failed to connect to client.");
           });
 
+          // Fallback: If 'open' doesn't fire but we are stuck in Connecting, 
+          // allow manual retry or check logs.
       } catch (e: any) {
           setErrorMsg(e.message || "Failed to initiate connection");
           setStatus(ConnectionStatus.FAILED);
+      }
+  };
+
+  const requestScreen = (conn: DataConnection | null) => {
+      if (conn && conn.open) {
+          console.log("Sending request_stream to client");
+          conn.send({ type: 'request_stream', technicianId: myId });
+          setDetailedStatus("Request sent. Waiting for client approval...");
+      } else {
+          console.warn("Cannot request screen: Connection not open");
       }
   };
 
@@ -228,9 +251,29 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
       }
   };
 
+  const handleManualRequest = () => {
+      if (connRef.current) {
+          requestScreen(connRef.current);
+      }
+  };
+
   const setupDataConnection = (conn: DataConnection) => {
       conn.on('data', async (data: any) => {
           console.log("Received data:", data);
+
+          // If we receive ANY data, we are definitely connected.
+          // This fixes the bug where Technician stays in "Connecting" state if 'open' event was missed.
+          if (status !== ConnectionStatus.CONNECTED) {
+              setStatus(ConnectionStatus.CONNECTED);
+          }
+
+          if (data.type === 'ack') {
+              console.log("ACK received from client");
+              // Client is ready, let's request screen again to be sure
+              if (mode === 'technician') {
+                  requestScreen(conn);
+              }
+          }
 
           if (data.type === 'chat') {
               const senderRole = mode === 'technician' ? 'user' : 'technician';
@@ -244,7 +287,6 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
 
           if (data.type === 'request_stream' && mode === 'client') {
               console.log("Technician requested screen sharing.");
-              // Save the technician ID provided in the payload for a robust callback
               if (data.technicianId) {
                   setTechnicianIdForCall(data.technicianId);
               }
@@ -256,18 +298,21 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
           addMessage('Peer disconnected.', 'system');
           setStatus(ConnectionStatus.DISCONNECTED);
           setDetailedStatus("Peer disconnected");
+          setRemoteStream(null);
+          setIsVideoPlaying(false);
       });
   };
 
   const handleConsentToShare = async () => {
       setShowConsentModal(false);
       try {
+          // IMPORTANT: Capture cursor and audio for best compatibility
           const stream = await navigator.mediaDevices.getDisplayMedia({
               video: { 
                 cursor: "always",
                 frameRate: 30
               } as any,
-              audio: false // Audio often complicates autoplay, disabling for visual-first support
+              audio: false 
           });
 
           // Determine target ID: use the one sent in payload, or fallback to connection peer
@@ -512,6 +557,7 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
                          <div className="animate-spin w-12 h-12 border-4 border-green-500 border-t-transparent rounded-full mx-auto mb-6"></div>
                          <h3 className="text-xl text-white font-bold tracking-tight">Establishing Connection...</h3>
                          <p className="text-slate-400 text-sm mt-2 font-mono">{detailedStatus}</p>
+                         <p className="text-xs text-slate-500 mt-4">Make sure the Client is Online and waiting.</p>
                     </div>
                 )}
                 
@@ -523,7 +569,7 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
                                 {remoteStream ? <Signal className="w-8 h-8 text-green-400" /> : <Monitor className="w-8 h-8 text-blue-400" />}
                             </div>
                             <h3 className="text-lg font-bold text-white mb-2">
-                                {remoteStream ? "Video Stream Received" : "Waiting for Screen Share"}
+                                {remoteStream ? "Video Stream Received" : "Requesting Screen..."}
                             </h3>
                             <p className="text-slate-400 text-sm mb-6">
                                 {remoteStream 
@@ -531,15 +577,26 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
                                  : "Signaling connected. Waiting for client to approve..."}
                             </p>
                             
-                            {/* Manual Play Button if browser blocked autoplay */}
-                            {remoteStream && (
-                                <button 
-                                    onClick={forcePlayVideo}
-                                    className="w-full py-3 bg-green-600 hover:bg-green-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors animate-pulse"
-                                >
-                                    <Play className="w-5 h-5 fill-current" /> Force Video Play
-                                </button>
-                            )}
+                            {/* Manual Buttons */}
+                            <div className="space-y-3">
+                                {!remoteStream && (
+                                    <button 
+                                        onClick={handleManualRequest}
+                                        className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-medium flex items-center justify-center gap-2 transition-colors"
+                                    >
+                                        <Radio className="w-4 h-4" /> Resend Request
+                                    </button>
+                                )}
+                                
+                                {remoteStream && (
+                                    <button 
+                                        onClick={forcePlayVideo}
+                                        className="w-full py-3 bg-green-600 hover:bg-green-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-colors animate-pulse"
+                                    >
+                                        <Play className="w-5 h-5 fill-current" /> Force Video Play
+                                    </button>
+                                )}
+                            </div>
                          </div>
                      </div>
                 )}
