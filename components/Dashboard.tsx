@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { ArrowRight, Monitor, Users, Shield, Cpu, HelpCircle, X, Copy, Check, Info, Globe, Phone, Lock, Key, RefreshCw, LogOut, WifiOff, Download, Laptop } from 'lucide-react';
+import { ArrowRight, Monitor, Users, Shield, Cpu, HelpCircle, X, Copy, Check, Info, Globe, Phone, Lock, Key, RefreshCw, LogOut, WifiOff, Download, Laptop, Zap } from 'lucide-react';
 import { LoginModal } from './LoginModal';
 import { UserRole } from '../types';
 import { generateEmployeeToken } from '../services/authService';
@@ -374,14 +374,27 @@ export const Dashboard: React.FC<DashboardProps> = ({ onStartSession }) => {
                         <p className="text-xs text-slate-400 mb-4 leading-relaxed">
                             Web browsers restrict direct control for security. If the technician needs to control your mouse, please download our desktop application.
                         </p>
-                        <a 
-                            href="https://github.com/rustdesk/rustdesk/releases/download/1.3.2/rustdesk-1.3.2-x86_64.exe" 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="w-full py-3 bg-slate-800 hover:bg-slate-750 hover:border-blue-500 text-blue-400 hover:text-blue-300 rounded-xl font-bold text-sm transition-all border border-slate-700 flex items-center justify-center gap-2"
-                        >
-                            <Download className="w-4 h-4" /> Download Desktop App (Exe)
-                        </a>
+                        
+                        <div className="space-y-3">
+                            <a 
+                                href="https://github.com/rustdesk/rustdesk/releases/download/1.3.2/rustdesk-1.3.2-x86_64.exe" 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="w-full py-3 bg-slate-800 hover:bg-slate-750 hover:border-blue-500 text-blue-400 hover:text-blue-300 rounded-xl font-bold text-sm transition-all border border-slate-700 flex items-center justify-center gap-2"
+                            >
+                                <Download className="w-4 h-4" /> Download RustDesk (Open Source)
+                            </a>
+
+                            <a 
+                                href="https://www.ultraviewer.net/en/UltraViewer_setup_6.6_en.exe" 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="w-full py-3 bg-orange-600 hover:bg-orange-500 text-white rounded-xl font-bold text-sm transition-all border border-orange-500 shadow-[0_0_15px_rgba(249,115,22,0.4)] hover:shadow-[0_0_25px_rgba(249,115,22,0.6)] flex items-center justify-center gap-2 relative overflow-hidden group"
+                            >
+                                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000"></div>
+                                <Zap className="w-4 h-4 fill-current" /> Download UltraViewer (Exe)
+                            </a>
+                        </div>
                     </div>
 
                      <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-5 flex gap-4 items-start">
