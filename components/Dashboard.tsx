@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { ArrowRight, Monitor, Users, Shield, Cpu, HelpCircle, X, Copy, Check, Info, Globe, Phone, Lock, Key, RefreshCw, LogOut, WifiOff } from 'lucide-react';
+import { ArrowRight, Monitor, Users, Shield, Cpu, HelpCircle, X, Copy, Check, Info, Globe, Phone, Lock, Key, RefreshCw, LogOut, WifiOff, Download, Laptop } from 'lucide-react';
 import { LoginModal } from './LoginModal';
 import { UserRole } from '../types';
 import { generateEmployeeToken } from '../services/authService';
@@ -363,6 +363,25 @@ export const Dashboard: React.FC<DashboardProps> = ({ onStartSession }) => {
                                 You must click the button above to allow the technician to connect.
                             </div>
                         </div>
+                    </div>
+
+                    {/* Alternate Download Section */}
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-lg">
+                        <div className="flex items-center gap-3 mb-4">
+                            <Laptop className="w-5 h-5 text-blue-400" />
+                            <h3 className="text-sm font-bold text-white uppercase tracking-wide">Need Mouse & Keyboard Control?</h3>
+                        </div>
+                        <p className="text-xs text-slate-400 mb-4 leading-relaxed">
+                            Web browsers restrict direct control for security. If the technician needs to control your mouse, please download our desktop application.
+                        </p>
+                        <a 
+                            href="https://github.com/rustdesk/rustdesk/releases/download/1.3.2/rustdesk-1.3.2-x86_64.exe" 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="w-full py-3 bg-slate-800 hover:bg-slate-750 hover:border-blue-500 text-blue-400 hover:text-blue-300 rounded-xl font-bold text-sm transition-all border border-slate-700 flex items-center justify-center gap-2"
+                        >
+                            <Download className="w-4 h-4" /> Download Desktop App (Exe)
+                        </a>
                     </div>
 
                      <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl p-5 flex gap-4 items-start">
