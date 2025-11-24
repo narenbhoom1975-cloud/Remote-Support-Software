@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { ArrowRight, Monitor, Users, Shield, Cpu, HelpCircle, X, Copy, Check, Info, Globe, Phone, Lock, Key, RefreshCw, LogOut } from 'lucide-react';
+import { ArrowRight, Monitor, Users, Shield, Cpu, HelpCircle, X, Copy, Check, Info, Globe, Phone, Lock, Key, RefreshCw, LogOut, WifiOff } from 'lucide-react';
 import { LoginModal } from './LoginModal';
 import { UserRole } from '../types';
 import { generateEmployeeToken } from '../services/authService';
@@ -302,16 +302,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ onStartSession }) => {
                         {/* Decorative background element */}
                         <div className="absolute -top-12 -right-12 w-40 h-40 bg-green-500/10 rounded-full blur-3xl pointer-events-none"></div>
                         
-                        <div className="mb-8 relative z-10">
-                            <h2 className="text-2xl font-bold flex items-center gap-3 text-white">
-                                <div className="p-2 bg-green-500/20 rounded-lg">
-                                  <Shield className="text-green-400 w-6 h-6" />
-                                </div>
-                                Receive Support
-                            </h2>
-                            <p className="text-slate-400 text-base mt-2">
-                                Give this ID to the <strong>New Age Computers</strong> technician.
-                            </p>
+                        <div className="mb-8 relative z-10 flex justify-between items-start">
+                            <div>
+                              <h2 className="text-2xl font-bold flex items-center gap-3 text-white">
+                                  <div className="p-2 bg-green-500/20 rounded-lg">
+                                    <Shield className="text-green-400 w-6 h-6" />
+                                  </div>
+                                  Receive Support
+                              </h2>
+                              <p className="text-slate-400 text-base mt-2">
+                                  Give this ID to the <strong>New Age Computers</strong> technician.
+                              </p>
+                            </div>
+                            
+                            <div className="flex flex-col items-end">
+                              <span className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-400 bg-slate-900/50 px-2 py-1 rounded border border-slate-700">
+                                <WifiOff className="w-3 h-3 text-slate-500" /> Offline
+                              </span>
+                            </div>
                         </div>
                         
                         <div className="space-y-6 relative z-10">
@@ -336,10 +344,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ onStartSession }) => {
                             
                             <button 
                                 onClick={handleStartClient}
-                                className="w-full py-5 bg-green-600 hover:bg-green-500 text-white rounded-xl transition-all text-lg font-bold flex items-center justify-center gap-3 shadow-xl shadow-green-600/20 border border-green-500"
+                                className="w-full py-5 bg-green-600 hover:bg-green-500 text-white rounded-xl transition-all text-lg font-bold flex items-center justify-center gap-3 shadow-xl shadow-green-600/20 border border-green-500 animate-pulse hover:animate-none"
                             >
-                                <Shield className="w-6 h-6" /> Start Waiting for Connection
+                                <Shield className="w-6 h-6" /> Go Online & Wait for Connection
                             </button>
+                            
+                            <div className="text-center text-xs text-slate-500">
+                                You must click the button above to allow the technician to connect.
+                            </div>
                         </div>
                     </div>
 
@@ -388,9 +400,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onStartSession }) => {
                 <div className="flex gap-4 p-3 bg-slate-800/50 rounded-xl">
                   <div className="w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold shrink-0">2</div>
                   <div>
-                    <h4 className="font-bold text-white">Exchange ID</h4>
+                    <h4 className="font-bold text-white">Go Online</h4>
                     <p className="text-sm text-slate-300 mt-1">
-                        The User shares their ID. The Technician enters it in the box.
+                        <strong>Important:</strong> The Client MUST click "Go Online & Wait for Connection" before the Technician can connect.
                     </p>
                   </div>
                 </div>
@@ -400,7 +412,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onStartSession }) => {
                   <div>
                     <h4 className="font-bold text-white">Start Support</h4>
                     <p className="text-sm text-slate-300 mt-1">
-                      Click Connect. The browser will ask for screen sharing permissions.
+                      Technician enters the ID and clicks Connect. Browser asks for permission.
                     </p>
                   </div>
                 </div>

@@ -1,5 +1,6 @@
+
 import React, { useEffect, useRef, useState } from 'react';
-import { X, MessageSquare, BrainCircuit, Wifi, AlertTriangle, ChevronDown, Monitor, Command, Lock, Power, RefreshCw, FileText, CheckCircle2, User, Share, ArrowLeft } from 'lucide-react';
+import { X, MessageSquare, BrainCircuit, Wifi, AlertTriangle, ChevronDown, Monitor, Command, Lock, Power, RefreshCw, FileText, CheckCircle2, User, Share, ArrowLeft, RefreshCcw } from 'lucide-react';
 import { ChatPanel } from './ChatPanel';
 import { ConnectionStatus, ChatMessage } from '../types';
 import { analyzeScreenSnapshot } from '../services/geminiService';
@@ -143,9 +144,18 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
             });
         });
 
-        peer.on('error', (err) => {
+        peer.on('error', (err: any) => {
             console.error('Peer error:', err);
-            setErrorMsg(`Connection Error: ${err.type}`);
+            
+            let userFriendlyError = `Connection Error: ${err.type}`;
+            
+            if (err.type === 'peer-unavailable') {
+                userFriendlyError = `Partner (${targetId}) is not online. Please ask them to click 'Go Online' on their screen.`;
+            } else if (err.type === 'network') {
+                userFriendlyError = "Network connection lost. Please check your internet.";
+            }
+
+            setErrorMsg(userFriendlyError);
             setStatus(ConnectionStatus.FAILED);
         });
 
@@ -170,29 +180,42 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
   const connectToClient = (peer: Peer) => {
       if (!targetId) return;
       
+      setErrorMsg(null);
+      setStatus(ConnectionStatus.CONNECTING);
       addMessage(`Connecting to ${targetId}...`, 'system');
       
-      // 1. Open Data Connection
-      const conn = peer.connect(targetId);
-      connRef.current = conn;
-      setupDataConnection(conn);
+      try {
+          // 1. Open Data Connection
+          const conn = peer.connect(targetId);
+          connRef.current = conn;
+          setupDataConnection(conn);
 
-      // 2. Call the client (Video Request)
-      // Let's create a dummy stream for the Technician to "call" with.
-      const canvas = document.createElement('canvas');
-      const stream = canvas.captureStream(1);
-      const call = peer.call(targetId, stream);
-      
-      call.on('stream', (remoteStream) => {
-          // This is the Client's screen!
-          if (videoRef.current) {
-              videoRef.current.srcObject = remoteStream;
-              setStatus(ConnectionStatus.CONNECTED);
-              addMessage("Receiving remote screen.", 'system');
-          }
-      });
-      
-      callRef.current = call;
+          // 2. Call the client (Video Request)
+          // Let's create a dummy stream for the Technician to "call" with.
+          const canvas = document.createElement('canvas');
+          const stream = canvas.captureStream(1);
+          const call = peer.call(targetId, stream);
+          
+          call.on('stream', (remoteStream) => {
+              // This is the Client's screen!
+              if (videoRef.current) {
+                  videoRef.current.srcObject = remoteStream;
+                  setStatus(ConnectionStatus.CONNECTED);
+                  addMessage("Receiving remote screen.", 'system');
+              }
+          });
+          
+          callRef.current = call;
+      } catch (e: any) {
+          setErrorMsg(e.message || "Failed to initiate connection");
+          setStatus(ConnectionStatus.FAILED);
+      }
+  };
+
+  const handleRetryConnection = () => {
+      if (peerInstance.current && mode === 'technician') {
+          connectToClient(peerInstance.current);
+      }
   };
 
   const setupDataConnection = (conn: DataConnection) => {
@@ -399,7 +422,17 @@ export const ActiveSession: React.FC<ActiveSessionProps> = ({ mode, myId, target
                         <AlertTriangle className="w-16 h-16 text-red-500 mx-auto mb-4" />
                         <h3 className="text-xl text-white font-bold mb-2">Connection Failed</h3>
                         <p className="text-zinc-400 mb-6">{errorMsg || "Could not establish P2P connection."}</p>
-                        <button onClick={onEndSession} className="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl font-medium transition-colors">Return to Dashboard</button>
+                        <div className="flex flex-col gap-3">
+                            {mode === 'technician' && (
+                                <button 
+                                    onClick={handleRetryConnection} 
+                                    className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-medium transition-colors flex items-center justify-center gap-2"
+                                >
+                                    <RefreshCcw className="w-4 h-4" /> Retry Connection
+                                </button>
+                            )}
+                            <button onClick={onEndSession} className="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl font-medium transition-colors">Return to Dashboard</button>
+                        </div>
                     </div>
                 )}
                 
